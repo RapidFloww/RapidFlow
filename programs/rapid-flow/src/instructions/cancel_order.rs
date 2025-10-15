@@ -4,7 +4,7 @@ use anchor_spl::{
     token::{transfer, Token, TokenAccount, Transfer},
 };
 
-use crate::*;
+use crate::{error::ErrorCode, *};
 
 #[derive(Accounts)]
 pub struct CancelOrder<'info> {
@@ -145,16 +145,4 @@ impl<'info> CancelOrder<'info> {
 
         Ok(())
     }
-}
-
-#[error_code]
-pub enum ErrorCode {
-    #[msg("Order not found")]
-    OrderNotFound,
-    #[msg("Unauthorized access")]
-    UnauthorizedAccess,
-    #[msg("Insufficient funds")]
-    InsufficientFunds,
-    #[msg("Math overflow")]
-    MathOverflow,
 }

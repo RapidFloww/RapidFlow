@@ -4,7 +4,7 @@ use anchor_spl::{
     token::{transfer, Token, TokenAccount, Transfer},
 };
 
-use crate::*;
+use crate::{error::ErrorCode, *};
 
 #[derive(Accounts)]
 pub struct SettleFunds<'info> {
@@ -107,12 +107,4 @@ impl<'info> SettleFunds<'info> {
 
         Ok(())
     }
-}
-
-#[error_code]
-pub enum ErrorCode {
-    #[msg("Unauthorized access")]
-    UnauthorizedAccess,
-    #[msg("No funds to settle")]
-    NoFundsToSettle,
 }

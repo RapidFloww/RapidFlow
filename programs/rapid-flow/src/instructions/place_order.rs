@@ -4,7 +4,7 @@ use anchor_spl::{
     token::{transfer, Mint, Token, TokenAccount, Transfer},
 };
 
-use crate::*;
+use crate::{error::ErrorCode, *};
 
 #[derive(Accounts)]
 pub struct PlaceOrder<'info> {
@@ -168,7 +168,7 @@ impl<'info> PlaceOrder<'info> {
                             .size
                             .checked_sub(match_size)
                             .ok_or(ErrorCode::MathOverflow)?;
-                         i = i.checked_add(1).unwrap_or(usize::MAX);
+                        i = i.checked_add(1).unwrap_or(usize::MAX);
                     }
                 } else {
                     break;
@@ -211,7 +211,7 @@ impl<'info> PlaceOrder<'info> {
                             .size
                             .checked_sub(match_size)
                             .ok_or(ErrorCode::MathOverflow)?;
-                       i = i.checked_add(1).unwrap_or(usize::MAX);
+                        i = i.checked_add(1).unwrap_or(usize::MAX);
                     }
                 } else {
                     break;
@@ -254,12 +254,4 @@ impl<'info> PlaceOrder<'info> {
 
         Ok(())
     }
-}
-
-#[error_code]
-pub enum ErrorCode {
-    #[msg("InsufficientFunds")]
-    InsufficientFunds,
-    #[msg("MathOverflow")]
-    MathOverflow,
 }
