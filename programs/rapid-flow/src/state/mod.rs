@@ -2,14 +2,16 @@ use anchor_lang::prelude::*;
 
 #[account]
 pub struct OrderBook {
+    // book
     pub market: Pubkey,
     pub is_bid: bool,
-    pub orders: Vec<BookOrder>,
+    pub orders: Vec<Order>,
     pub bump: u8,
 }
 
 #[account]
-pub struct BookOrder {
+pub struct Order {
+    // single order
     pub order_id: u128,
     pub owner: Pubkey,
     pub price: u64,
@@ -33,11 +35,11 @@ pub struct OpenOrders {
 #[derive(InitSpace)]
 pub struct Market {
     pub authority: Pubkey,
-    pub base_mint: Pubkey,
-    pub quote_mint: Pubkey,
+    pub base_mint: Pubkey,  // sol
+    pub quote_mint: Pubkey, // usdc
     pub base_vault: Pubkey,
     pub quote_vault: Pubkey,
-    pub bids: Pubkey,
-    pub asks: Pubkey,
+    pub bids: Pubkey, // orderbook
+    pub asks: Pubkey, // orderbook
     pub bump: u8,
 }

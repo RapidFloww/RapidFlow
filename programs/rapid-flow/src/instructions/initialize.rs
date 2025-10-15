@@ -15,8 +15,8 @@ pub struct Initialize<'info> {
     #[account(mut)]
     pub signer: Signer<'info>,
 
-    pub base_mint: Account<'info, Mint>,
-    pub quote_mint: Account<'info, Mint>,
+    pub base_mint: Account<'info, Mint>, // sol
+    pub quote_mint: Account<'info, Mint>, // usdc
 
     #[account(
         init,
@@ -25,7 +25,7 @@ pub struct Initialize<'info> {
         seeds = [b"market", base_mint.key().as_ref(), quote_mint.key().as_ref()],
         bump
     )]
-    pub market: Account<'info, Market>,
+    pub market: Account<'info, Market>, // sol-usdc
 
     #[account(
         init,
@@ -34,7 +34,7 @@ pub struct Initialize<'info> {
         seeds = [b"bids", market.key().as_ref()],
         bump
     )]
-    pub bids: Account<'info, OrderBook>,
+    pub bids: Account<'info, OrderBook>, 
 
     #[account(
         init,
@@ -52,7 +52,7 @@ pub struct Initialize<'info> {
         associated_token::authority = market,
         associated_token::token_program = token_program
     )]
-    pub base_vault: Account<'info, TokenAccount>,
+    pub base_vault: Account<'info, TokenAccount>, // sol
 
     #[account(
         init,
@@ -61,7 +61,7 @@ pub struct Initialize<'info> {
         associated_token::authority = market,
         associated_token::token_program = token_program
     )]
-    pub quote_vault: Account<'info, TokenAccount>,
+    pub quote_vault: Account<'info, TokenAccount>, // usdc
 
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
