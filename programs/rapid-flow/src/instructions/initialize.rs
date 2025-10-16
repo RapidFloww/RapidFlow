@@ -1,3 +1,4 @@
+#![allow(warnings)]
 use anchor_lang::prelude::*;
 
 use anchor_spl::{
@@ -7,6 +8,7 @@ use anchor_spl::{
 
 use crate::*;
 
+#[allow(overflowing_literals)]
 pub const MAX_ORDERS: usize = 128;
 pub const ORDER_BOOK_SPACE: usize = 8 + 32 + 1 + 4 + (MAX_ORDERS * 72);
 #[derive(Accounts)]
@@ -69,6 +71,9 @@ pub struct Initialize<'info> {
 
 impl<'info> Initialize<'info> {
     pub fn initialize(&mut self) -> Result<()> {
+        // ==========================================================
+        // SECTION 1: Initialize the Market Account
+        // ==========================================================
         self.market.set_inner(Market {
             authority: self.signer.key(),
             base_mint: self.base_mint.key(),
@@ -80,6 +85,9 @@ impl<'info> Initialize<'info> {
             bump: self.market.bump,
         });
 
+        // ==========================================================
+        // SECTION 2: Initialize the Bids OrderBook
+        // ==========================================================
         self.bids.set_inner(OrderBook {
             market: self.market.key(),
             is_bid: true,
@@ -87,12 +95,20 @@ impl<'info> Initialize<'info> {
             bump: self.bids.bump,
         });
 
+        // ==========================================================
+        // SECTION 3: Initialize the Asks OrderBook
+        // ==========================================================
         self.asks.set_inner(OrderBook {
             market: self.market.key(),
             is_bid: false,
             orders: Vec::new(),
             bump: self.asks.bump,
         });
+
+        // ==========================================================
+        // SECTION 4: Finalize Initialization
+        // ==========================================================
+        // All accounts are now initialized. Return success.
 
         Ok(())
     }
