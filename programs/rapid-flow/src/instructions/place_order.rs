@@ -82,9 +82,14 @@ pub struct PlaceOrder<'info> {
 }
 
 impl<'info> PlaceOrder<'info> {
-    pub fn place_order(&mut self, is_bid: bool, price: u64, size: u64) -> Result<()> {
+    pub fn place_order(
+        &mut self,
+        is_bid: bool,
+        price: u64,
+        size: u64,
+        remaining_accounts: &'info [AccountInfo<'info>],
+    ) -> Result<()> {
         let clock = Clock::get()?;
-
         let amount = if is_bid { price * size } else { size };
 
         if self.user_open_orders.owner == Pubkey::default() {
@@ -134,23 +139,66 @@ impl<'info> PlaceOrder<'info> {
             while i < asks.orders.len() && size > 0 {
                 let ask_order = &asks.orders[i];
 
-                if price >= ask_order.price && size == ask_order.size {
-                    self.user_open_orders.quote_locked = self
-                        .user_open_orders
-                        .quote_locked
-                        .checked_sub(price * size)
-                        .ok_or(ErrorCode::InsufficientFunds)?;
+                // Find the matching counter-party account from remaining_accounts
+                let mut counter_user_account_opt = None;
+                for account in remaining_accounts.iter() {
+                    // Try to deserialize to check if this is the right account
+                    if let Ok(counter_open_orders) = Account::<OpenOrders>::try_from(account) {
+                        if counter_open_orders.owner == ask_order.owner {
+                            counter_user_account_opt = Some(account);
+                            break;
+                        }
+                    }
+                }
 
-                    self.user_open_orders.base_free = self
-                        .user_open_orders
-                        .base_free
-                        .checked_add(size)
-                        .ok_or(ErrorCode::MathOverflow)?;
+                // If we found the matching account, process the match
+                if let Some(counter_user_account) = counter_user_account_opt {
+                    require!(
+                        counter_user_account.is_writable,
+                        ErrorCode::InsufficientFunds
+                    );
 
-                    asks.orders.remove(i);
-                    break; // Order fully matched, exit loop
+                    let mut counter_user_open_orders: Account<OpenOrders> =
+                        Account::try_from(counter_user_account)?;
+
+                    if price >= ask_order.price && size == ask_order.size {
+                        self.user_open_orders.quote_locked = self
+                            .user_open_orders
+                            .quote_locked
+                            .checked_sub(price * size)
+                            .ok_or(ErrorCode::InsufficientFunds)?;
+
+                        self.user_open_orders.base_free = self
+                            .user_open_orders
+                            .base_free
+                            .checked_add(size)
+                            .ok_or(ErrorCode::MathOverflow)?;
+
+                        counter_user_open_orders.base_locked = counter_user_open_orders
+                            .base_locked
+                            .checked_sub(size)
+                            .ok_or(ErrorCode::InsufficientFunds)?;
+                        counter_user_open_orders.quote_free = counter_user_open_orders
+                            .quote_free
+                            .checked_add(ask_order.price * size)
+                            .ok_or(ErrorCode::MathOverflow)?;
+
+                        // Extract struct clone (to release RefCell borrow)
+                        let counter_user_data = (*counter_user_open_orders).clone();
+                        drop(counter_user_open_orders);
+
+                        // Re-borrow and serialize
+                        counter_user_data
+                            .try_serialize(&mut *counter_user_account.data.borrow_mut())?;
+
+                        asks.orders.remove(i);
+                        break; // Order fully matched, exit loop
+                    } else {
+                        i += 1; // Move to next order
+                    }
                 } else {
-                    i += 1; // Move to next order
+                    // No matching account found, skip this order
+                    i += 1;
                 }
             }
 
@@ -165,29 +213,70 @@ impl<'info> PlaceOrder<'info> {
                 });
             }
         } else {
-            // Fixed matching logic for ask orders (selling)
             let bids = &mut self.bids;
             let mut i = 0;
 
             while i < bids.orders.len() && size > 0 {
                 let bid_order = &bids.orders[i];
 
-                if price <= bid_order.price && size == bid_order.size {
-                    self.user_open_orders.base_locked = self
-                        .user_open_orders
-                        .base_locked
-                        .checked_sub(size)
-                        .ok_or(ErrorCode::InsufficientFunds)?;
+                // Find the matching counter-party account from remaining_accounts
+                let mut counter_user_account_opt = None;
+                for account in remaining_accounts.iter() {
+                    // Try to deserialize to check if this is the right account
+                    if let Ok(counter_open_orders) = Account::<OpenOrders>::try_from(account) {
+                        if counter_open_orders.owner == bid_order.owner {
+                            counter_user_account_opt = Some(account);
+                            break;
+                        }
+                    }
+                }
 
-                    self.user_open_orders.quote_free = self
-                        .user_open_orders
-                        .quote_free
-                        .checked_add(price * size)
-                        .ok_or(ErrorCode::MathOverflow)?;
+                // If we found the matching account, process the match
+                if let Some(counter_user_account) = counter_user_account_opt {
+                    require!(
+                        counter_user_account.is_writable,
+                        ErrorCode::InsufficientFunds
+                    );
 
-                    bids.orders.remove(i);
-                    break;
+                    let mut counter_user_open_orders: Account<OpenOrders> =
+                        Account::try_from(counter_user_account)?;
+
+                    if price <= bid_order.price && size == bid_order.size {
+                        self.user_open_orders.base_locked = self
+                            .user_open_orders
+                            .base_locked
+                            .checked_sub(size)
+                            .ok_or(ErrorCode::InsufficientFunds)?;
+
+                        self.user_open_orders.quote_free = self
+                            .user_open_orders
+                            .quote_free
+                            .checked_add(price * size)
+                            .ok_or(ErrorCode::MathOverflow)?;
+
+                        counter_user_open_orders.quote_locked = counter_user_open_orders
+                            .quote_locked
+                            .checked_sub(price * size)
+                            .ok_or(ErrorCode::InsufficientFunds)?;
+                        counter_user_open_orders.base_free = counter_user_open_orders
+                            .base_free
+                            .checked_add(size)
+                            .ok_or(ErrorCode::MathOverflow)?;
+
+                        // Extract struct clone (to release RefCell borrow)
+                        let counter_user_data = (*counter_user_open_orders).clone();
+                        drop(counter_user_open_orders);
+
+                        // Re-borrow and serialize
+                        counter_user_data
+                            .try_serialize(&mut *counter_user_account.data.borrow_mut())?;
+                        bids.orders.remove(i);
+                        break;
+                    } else {
+                        i += 1;
+                    }
                 } else {
+                    // No matching account found, skip this order
                     i += 1;
                 }
             }

@@ -83,7 +83,7 @@ impl<'info> Initialize<'info> {
             bump: self.market.bump,
         });
 
-        // SECTION 3: Initialize the Bids OrderBook
+        // SECTION 2: Initialize the Bids OrderBook
         self.bids.set_inner(OrderBook {
             market: self.market.key(),
             is_bid: true,
@@ -91,7 +91,7 @@ impl<'info> Initialize<'info> {
             bump: self.bids.bump,
         });
 
-        // SECTION 4: Initialize the Asks OrderBook
+        // SECTION 3: Initialize the Asks OrderBook
         self.asks.set_inner(OrderBook {
             market: self.market.key(),
             is_bid: false,

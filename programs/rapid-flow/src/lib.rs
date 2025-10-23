@@ -17,22 +17,23 @@ pub mod rapid_flow {
         Ok(())
     }
 
-    pub fn place_order(
-        ctx: Context<PlaceOrder>,
+    pub fn place_order<'c: 'info, 'info>(
+        ctx: Context<'_, '_, 'c, 'info, PlaceOrder<'c>>,
         is_bid: bool,
         price: u64,
         size: u64,
     ) -> Result<()> {
-        ctx.accounts.place_order(is_bid, price, size)?;
+        ctx.accounts
+            .place_order(is_bid, price, size, ctx.remaining_accounts)?;
         Ok(())
     }
 
-    pub fn settle_funds(ctx: Context<SettleFunds>) -> Result<()> {
-        ctx.accounts.settle_funds()?;
-        Ok(())
-    }
+    // pub fn settle_funds(ctx: Context<SettleFunds>) -> Result<()> {
+    //     ctx.accounts.settle_funds()?;
+    //     Ok(())
+    // }
 
-    pub fn cancel_order(ctx: Context<CancelOrder>, order_id: u128, is_bid: bool) -> Result<()> {
-        ctx.accounts.cancel_order(order_id, is_bid)
-    }
+    // pub fn cancel_order(ctx: Context<CancelOrder>, order_id: u128, is_bid: bool) -> Result<()> {
+    //     ctx.accounts.cancel_order(order_id, is_bid)
+    // }
 }
