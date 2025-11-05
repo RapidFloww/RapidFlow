@@ -12,7 +12,7 @@ rapid_flow = "5hZHJEeFN45bz4xYu1A2RHwtfapTHiq1j8yroVnvjPtQ"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
