@@ -355,6 +355,10 @@ describe("rapid-flow", () => {
 
     console.log("\nTransaction sig:", tx);
 
+    // --- ADD THIS LINE ---
+    // Wait for the transaction to be fully finalized by the network
+    await provider.connection.confirmTransaction(tx, "finalized");
+
     // === Assertions ===
     // Check that the accounts were created and have the correct data
     const marketAccount = await program.account.market.fetch(marketPda);

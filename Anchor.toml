@@ -5,8 +5,8 @@ package_manager = "yarn"
 resolution = true
 skip-lint = false
 
-[programs.localnet]
-rapid_flow = "5hZHJEeFN45bz4xYu1A2RHwtfapTHiq1j8yroVnvjPtQ"
+[programs.devnet]
+rapid_flow = "DgqfQTg1ZUxXb1Cm2XzLq9ftNwh51bhF4FTove7hdfDh"
 
 [registry]
 url = "https://api.apr.dev"
