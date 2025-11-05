@@ -34,6 +34,11 @@ describe("rapid-flow", () => {
   let BobQuoteVault: PublicKey;
   let BobOpenOrdersPda: PublicKey;
 
+  let DogWallet = Keypair.generate();
+  let DogBaseVault: PublicKey;
+  let DogQuoteVault: PublicKey;
+  let DogOpenOrdersPda: PublicKey;
+
   before(async() => {
     // SOL
     baseMint = await createMint(
@@ -59,6 +64,13 @@ describe("rapid-flow", () => {
       2 * anchor.web3.LAMPORTS_PER_SOL  // 2 SOL
     );
     console.log("Sig: ", airdropSignature)
+
+    console.log("\n========== Airdropping SOL to Dog ==========\n")
+    const airdropSignature1 = await connection.requestAirdrop(
+      DogWallet.publicKey,
+      2 * anchor.web3.LAMPORTS_PER_SOL  // 2 SOL
+    );
+    console.log("Sig: ", airdropSignature1)
   
     console.log("\n========== Mint Accounts ==========\n")
     console.log("Base Mint:", baseMint.toBase58());
@@ -86,6 +98,11 @@ describe("rapid-flow", () => {
 
     [BobOpenOrdersPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("user_open_orders"), marketPda.toBuffer(), BobWallet.publicKey.toBuffer()],
+      program.programId
+    );
+
+    [DogOpenOrdersPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("user_open_orders"), marketPda.toBuffer(), DogWallet.publicKey.toBuffer()],
       program.programId
     );
   
@@ -132,6 +149,22 @@ describe("rapid-flow", () => {
       BobWallet.publicKey,  
     );
     BobQuoteVault = BobQuoteVaultAcc.address;
+
+    const DogBaseVaultAcc = await getOrCreateAssociatedTokenAccount(
+      connection,
+      wallet.payer,
+      baseMint,
+      DogWallet.publicKey,  
+    );
+    DogBaseVault = DogBaseVaultAcc.address;
+  
+    const DogQuoteVaultAcc = await getOrCreateAssociatedTokenAccount(
+      connection,
+      wallet.payer,
+      quoteMint,
+      DogWallet.publicKey,  
+    );
+    DogQuoteVault = DogQuoteVaultAcc.address;
   
     await mintTo(
       connection,
@@ -169,11 +202,31 @@ describe("rapid-flow", () => {
       0  // 100,000 USDC with 6 decimals
     );
 
+    await mintTo(
+      connection,
+      wallet.payer,
+      baseMint,
+      DogBaseVault,
+      wallet.publicKey,
+      100  // 10 SOL without 9 decimals
+    );
+  
+    await mintTo(
+      connection,
+      wallet.payer,
+      quoteMint,
+      DogQuoteVault,
+      wallet.publicKey,
+      0  // 100,000 USDC with 6 decimals
+    );
+
     // Debug: Check token balances
     const AliceBaseAccount = await getAccount(connection, AliceBaseVault);
     const AliceQuoteAccount = await getAccount(connection, AliceQuoteVault);
     const BobBaseAccount = await getAccount(connection, BobBaseVault);
     const BobQuoteAccount = await getAccount(connection, BobQuoteVault);
+    const DogBaseAccount = await getAccount(connection, DogBaseVault);
+    const DogQuoteAccount = await getAccount(connection, DogQuoteVault);
 
   
     console.log("\n========== Market Accounts ==========\n")
@@ -194,11 +247,18 @@ describe("rapid-flow", () => {
     console.log("Quote Vault:", BobQuoteVault.toBase58());
     console.log("Open Orders PDA:", BobOpenOrdersPda.toBase58());
 
+    console.log("\n========== Dog Accounts ==========\n")
+    console.log("Base Vault:", DogBaseVault.toBase58());
+    console.log("Quote Vault:", DogQuoteVault.toBase58());
+    console.log("Open Orders PDA:", DogOpenOrdersPda.toBase58());
+
     console.log("\n========== Balances ==========\n")
     console.log("Alice Base balance:", Number(AliceBaseAccount.amount),"(SOL)");
     console.log("Alice Quote balance:", Number(AliceQuoteAccount.amount),"(USDC)");
     console.log("Bob Base balance:", Number(BobBaseAccount.amount),"(SOL)");
     console.log("Bob Quote balance:", Number(BobQuoteAccount.amount),"(USDC)");
+    console.log("Dog Base balance:", Number(DogBaseAccount.amount),"(SOL)");
+    console.log("Dog Quote balance:", Number(DogQuoteAccount.amount),"(USDC)");
   });
 
   
@@ -220,10 +280,10 @@ describe("rapid-flow", () => {
 
 // Alice places BID order (buying SOL with USDC at 10 USDC per SOL)
 // Alice places BID order (buying SOL with USDC)
-it("Bid order placed successfully", async() => {
+it("Alice places Ask order successfully", async() => {
   console.log("\n>>>>>>>>>>>> Placing bid order <<<<<<<<<<<<\n")
-  const price = new anchor.BN(5); 
-  const size  = new anchor.BN(2);  
+  const price = new anchor.BN(10); 
+  const size  = new anchor.BN(6);  
 
     const tx = await program.methods.placeOrder(true, price, size).accounts({
       signer: wallet.publicKey,
@@ -249,29 +309,13 @@ it("Bid order placed successfully", async() => {
     console.log("Market's Base vault balance:", Number(BaseVaultAccount.amount),"(SOL)");
     console.log("Market's Quote vault balance:", Number(QuoteVaultAccount.amount),"(USDC)");
     console.log("\nTransaction sig:", tx);
-
-    try {
-      // Fetch the account data
-      const openOrdersAccount = await program.account.openOrders.fetch(AliceOpenOrdersPda);
-      
-      console.log("\n========== Alice Open Orders Data ==========");
-      console.log("Owner:", openOrdersAccount.owner.toBase58());
-      console.log("Market:", openOrdersAccount.market.toBase58());
-      console.log("Base Free:", openOrdersAccount.baseFree.toString());
-      console.log("Base Locked:", openOrdersAccount.baseLocked.toString());
-      console.log("Quote Free:", openOrdersAccount.quoteFree.toString());
-      console.log("Quote Locked:", openOrdersAccount.quoteLocked.toString());
-    } catch (error) {
-      console.log("OpenOrders account not found or not initialized yet");
-      return null;
-    }
   })
 
 // Bob places ASK order (selling SOL for USDC) - should match Alice's bid
-it("Ask order placed successfully", async() => {
+it("Bob places Ask order successfully", async() => {
   console.log("\n>>>>>>>>>>>> Placing ask order <<<<<<<<<<<<\n");
-  const price = new anchor.BN(5);
-  const size  = new anchor.BN(2);
+  const price = new anchor.BN(10);
+  const size  = new anchor.BN(4);
 
     const tx = await program.methods.placeOrder(false, price, size).accounts({
       signer: BobWallet.publicKey,
@@ -297,21 +341,84 @@ it("Ask order placed successfully", async() => {
     console.log("Market's Base vault balance:", Number(BaseVaultAccount.amount),"(SOL)");
     console.log("Market's Quote vault balance:", Number(QuoteVaultAccount.amount),"(USDC)");
     console.log("\nTransaction sig:", tx);
+  });
 
-    try {
-      // Fetch the account data
-      const openOrdersAccount = await program.account.openOrders.fetch(BobOpenOrdersPda);
-      
-      console.log("\n========== BOB Open Orders Data ==========");
-      console.log("Owner:", openOrdersAccount.owner.toBase58());
-      console.log("Market:", openOrdersAccount.market.toBase58());
-      console.log("Base Free:", openOrdersAccount.baseFree.toString());
-      console.log("Base Locked:", openOrdersAccount.baseLocked.toString());
-      console.log("Quote Free:", openOrdersAccount.quoteFree.toString());
-      console.log("Quote Locked:", openOrdersAccount.quoteLocked.toString());
-    } catch (error) {
-      console.log("OpenOrders account not found or not initialized yet");
-      return null;
-    }
+  it("Dog places Ask order successfully", async() => {
+    console.log("\n>>>>>>>>>>>> Placing ask order <<<<<<<<<<<<\n");
+    const price = new anchor.BN(10);
+    const size  = new anchor.BN(2);
+  
+      const tx = await program.methods.placeOrder(false, price, size).accounts({
+        signer: DogWallet.publicKey,
+        //@ts-ignore
+        market: marketPda,
+        asks: asksPda,
+        bids: bidsPda,
+        openOrders: DogOpenOrdersPda,
+        baseVault,
+        quoteVault,
+        userBaseVault: DogBaseVault,
+        userQuoteVault: DogQuoteVault
+      }).remainingAccounts([{pubkey: AliceOpenOrdersPda, isSigner: false, isWritable: true}]).signers([DogWallet]).rpc();
+  
+      const DogBaseAccount = await getAccount(connection, DogBaseVault);
+      const DogQuoteAccount = await getAccount(connection, DogQuoteVault);
+      const BaseVaultAccount = await getAccount(connection, baseVault);
+      const QuoteVaultAccount = await getAccount(connection, quoteVault);
+  
+      console.log("\n========== BALANCE AFTER ASK ORDER ==========\n");
+      console.log("Dog Base balance:", Number(DogBaseAccount.amount),"(SOL)");
+      console.log("Dog Quote balance:", Number(DogQuoteAccount.amount),"(USDC)");
+      console.log("Market's Base vault balance:", Number(BaseVaultAccount.amount),"(SOL)");
+      console.log("Market's Quote vault balance:", Number(QuoteVaultAccount.amount),"(USDC)");
+      console.log("\nTransaction sig:", tx);
+
+      try {
+        // Fetch the account data
+        const openOrdersAccount = await program.account.openOrders.fetch(AliceOpenOrdersPda);
+        
+        console.log("\n========== Alice Open Orders Data ==========");
+        console.log("Owner:", openOrdersAccount.owner.toBase58());
+        console.log("Market:", openOrdersAccount.market.toBase58());
+        console.log("Base Free:", openOrdersAccount.baseFree.toString());
+        console.log("Base Locked:", openOrdersAccount.baseLocked.toString());
+        console.log("Quote Free:", openOrdersAccount.quoteFree.toString());
+        console.log("Quote Locked:", openOrdersAccount.quoteLocked.toString());
+      } catch (error) {
+        console.log("OpenOrders account not found or not initialized yet");
+        return null;
+      }
+
+      try {
+        // Fetch the account data
+        const openOrdersAccount = await program.account.openOrders.fetch(BobOpenOrdersPda);
+
+        console.log("\n========== BOB Open Orders Data ==========");
+        console.log("Owner:", openOrdersAccount.owner.toBase58());
+        console.log("Market:", openOrdersAccount.market.toBase58());
+        console.log("Base Free:", openOrdersAccount.baseFree.toString());
+        console.log("Base Locked:", openOrdersAccount.baseLocked.toString());
+        console.log("Quote Free:", openOrdersAccount.quoteFree.toString());
+        console.log("Quote Locked:", openOrdersAccount.quoteLocked.toString());
+      } catch (error) {
+        console.log("OpenOrders account not found or not initialized yet");
+        return null;
+      }
+
+      try {
+        // Fetch the account data
+        const openOrdersAccount = await program.account.openOrders.fetch(DogOpenOrdersPda);
+        
+        console.log("\n========== Dog Open Orders Data ==========");
+        console.log("Owner:", openOrdersAccount.owner.toBase58());
+        console.log("Market:", openOrdersAccount.market.toBase58());
+        console.log("Base Free:", openOrdersAccount.baseFree.toString());
+        console.log("Base Locked:", openOrdersAccount.baseLocked.toString());
+        console.log("Quote Free:", openOrdersAccount.quoteFree.toString());
+        console.log("Quote Locked:", openOrdersAccount.quoteLocked.toString());
+      } catch (error) {
+        console.log("OpenOrders account not found or not initialized yet");
+        return null;
+      }
   })
 });

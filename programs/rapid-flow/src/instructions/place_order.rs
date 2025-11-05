@@ -86,11 +86,10 @@ impl<'info> PlaceOrder<'info> {
         &mut self,
         is_bid: bool,
         price: u64,
-        size: u64,
+        mut size: u64,
         remaining_accounts: &'info [AccountInfo<'info>],
     ) -> Result<()> {
         let clock = Clock::get()?;
-        let amount = if is_bid { price * size } else { size };
 
         if self.user_open_orders.owner == Pubkey::default() {
             self.user_open_orders.owner = self.signer.key();
@@ -101,48 +100,24 @@ impl<'info> PlaceOrder<'info> {
             self.user_open_orders.quote_locked = 0;
         }
 
-        let cpi_ctx = if is_bid {
-            let cpi_accounts = Transfer {
-                authority: self.signer.to_account_info(),
-                from: self.user_quote_vault.to_account_info(),
-                to: self.quote_vault.to_account_info(),
-            };
-            CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
-        } else {
-            let cpi_accounts = Transfer {
-                authority: self.signer.to_account_info(),
-                from: self.user_base_vault.to_account_info(),
-                to: self.base_vault.to_account_info(),
-            };
-            CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
-        };
-
+        // Matching logic FIRST (before locking funds)
         if is_bid {
-            self.user_open_orders.quote_locked = self
-                .user_open_orders
-                .quote_locked
-                .checked_add(amount)
-                .ok_or(ErrorCode::MathOverflow)?;
-        } else {
-            self.user_open_orders.base_locked = self
-                .user_open_orders
-                .base_locked
-                .checked_add(amount)
-                .ok_or(ErrorCode::MathOverflow)?;
-        }
-
-        // Fixed matching logic for bid orders (buying)
-        if is_bid {
+            // Buy order: match against asks (sellers)
             let asks = &mut self.asks;
             let mut i = 0;
 
             while i < asks.orders.len() && size > 0 {
-                let ask_order = &asks.orders[i];
+                let ask_order = &mut asks.orders[i];
+                
+                // Only match if price is acceptable
+                if price < ask_order.price {
+                    i += 1;
+                    continue;
+                }
 
                 // Find the matching counter-party account from remaining_accounts
                 let mut counter_user_account_opt = None;
                 for account in remaining_accounts.iter() {
-                    // Try to deserialize to check if this is the right account
                     if let Ok(counter_open_orders) = Account::<OpenOrders>::try_from(account) {
                         if counter_open_orders.owner == ask_order.owner {
                             counter_user_account_opt = Some(account);
@@ -161,40 +136,49 @@ impl<'info> PlaceOrder<'info> {
                     let mut counter_user_open_orders: Account<OpenOrders> =
                         Account::try_from(counter_user_account)?;
 
-                    if price >= ask_order.price && size == ask_order.size {
-                        self.user_open_orders.quote_locked = self
-                            .user_open_orders
-                            .quote_locked
-                            .checked_sub(price * size)
-                            .ok_or(ErrorCode::InsufficientFunds)?;
+                    // Calculate match size (take minimum of what's available)
+                    let match_size = core::cmp::min(size, ask_order.size);
+                    let match_quote_amount = ask_order.price
+                        .checked_mul(match_size)
+                        .ok_or(ErrorCode::MathOverflow)?;
 
-                        self.user_open_orders.base_free = self
-                            .user_open_orders
-                            .base_free
-                            .checked_add(size)
-                            .ok_or(ErrorCode::MathOverflow)?;
+                    // Update taker (buyer) balances - they get base tokens
+                    self.user_open_orders.base_free = self
+                        .user_open_orders
+                        .base_free
+                        .checked_add(match_size)
+                        .ok_or(ErrorCode::MathOverflow)?;
 
-                        counter_user_open_orders.base_locked = counter_user_open_orders
-                            .base_locked
-                            .checked_sub(size)
-                            .ok_or(ErrorCode::InsufficientFunds)?;
-                        counter_user_open_orders.quote_free = counter_user_open_orders
-                            .quote_free
-                            .checked_add(ask_order.price * size)
-                            .ok_or(ErrorCode::MathOverflow)?;
+                    // Update maker (seller) balances
+                    counter_user_open_orders.base_locked = counter_user_open_orders
+                        .base_locked
+                        .checked_sub(match_size)
+                        .ok_or(ErrorCode::InsufficientFunds)?;
+                    counter_user_open_orders.quote_free = counter_user_open_orders
+                        .quote_free
+                        .checked_add(match_quote_amount)
+                        .ok_or(ErrorCode::MathOverflow)?;
 
-                        // Extract struct clone (to release RefCell borrow)
-                        let counter_user_data = (*counter_user_open_orders).clone();
-                        drop(counter_user_open_orders);
+                    // Extract struct clone (to release RefCell borrow)
+                    let counter_user_data = (*counter_user_open_orders).clone();
+                    drop(counter_user_open_orders);
 
-                        // Re-borrow and serialize
-                        counter_user_data
-                            .try_serialize(&mut *counter_user_account.data.borrow_mut())?;
+                    // Re-borrow and serialize
+                    counter_user_data
+                        .try_serialize(&mut *counter_user_account.data.borrow_mut())?;
 
+                    // Update order size and remove if fully filled
+                    ask_order.size = ask_order.size
+                        .checked_sub(match_size)
+                        .ok_or(ErrorCode::MathOverflow)?;
+                    size = size
+                        .checked_sub(match_size)
+                        .ok_or(ErrorCode::MathOverflow)?;
+
+                    if ask_order.size == 0 {
                         asks.orders.remove(i);
-                        break; // Order fully matched, exit loop
                     } else {
-                        i += 1; // Move to next order
+                        i += 1;
                     }
                 } else {
                     // No matching account found, skip this order
@@ -202,8 +186,26 @@ impl<'info> PlaceOrder<'info> {
                 }
             }
 
-            // If no match found, add bid to order book
+            // Lock funds and add to book ONLY for remaining unfilled size
             if size > 0 {
+                let amount = price
+                    .checked_mul(size)
+                    .ok_or(ErrorCode::MathOverflow)?;
+
+                let cpi_accounts = Transfer {
+                    authority: self.signer.to_account_info(),
+                    from: self.user_quote_vault.to_account_info(),
+                    to: self.quote_vault.to_account_info(),
+                };
+                let cpi_ctx = CpiContext::new(self.token_program.to_account_info(), cpi_accounts);
+                transfer(cpi_ctx, amount)?;
+
+                self.user_open_orders.quote_locked = self
+                    .user_open_orders
+                    .quote_locked
+                    .checked_add(amount)
+                    .ok_or(ErrorCode::MathOverflow)?;
+
                 self.bids.orders.push(Order {
                     order_id: clock.unix_timestamp as u128,
                     owner: self.signer.key(),
@@ -213,16 +215,22 @@ impl<'info> PlaceOrder<'info> {
                 });
             }
         } else {
+            // Sell order: match against bids (buyers)
             let bids = &mut self.bids;
             let mut i = 0;
 
             while i < bids.orders.len() && size > 0 {
-                let bid_order = &bids.orders[i];
+                let bid_order = &mut bids.orders[i];
+                
+                // Only match if price is acceptable
+                if price > bid_order.price {
+                    i += 1;
+                    continue;
+                }
 
                 // Find the matching counter-party account from remaining_accounts
                 let mut counter_user_account_opt = None;
                 for account in remaining_accounts.iter() {
-                    // Try to deserialize to check if this is the right account
                     if let Ok(counter_open_orders) = Account::<OpenOrders>::try_from(account) {
                         if counter_open_orders.owner == bid_order.owner {
                             counter_user_account_opt = Some(account);
@@ -241,37 +249,47 @@ impl<'info> PlaceOrder<'info> {
                     let mut counter_user_open_orders: Account<OpenOrders> =
                         Account::try_from(counter_user_account)?;
 
-                    if price <= bid_order.price && size == bid_order.size {
-                        self.user_open_orders.base_locked = self
-                            .user_open_orders
-                            .base_locked
-                            .checked_sub(size)
-                            .ok_or(ErrorCode::InsufficientFunds)?;
+                    // Calculate match size
+                    let match_size = core::cmp::min(size, bid_order.size);
+                    let match_quote_amount = bid_order.price
+                        .checked_mul(match_size)
+                        .ok_or(ErrorCode::MathOverflow)?;
 
-                        self.user_open_orders.quote_free = self
-                            .user_open_orders
-                            .quote_free
-                            .checked_add(price * size)
-                            .ok_or(ErrorCode::MathOverflow)?;
+                    // Update taker (seller) balances - they get quote tokens
+                    self.user_open_orders.quote_free = self
+                        .user_open_orders
+                        .quote_free
+                        .checked_add(match_quote_amount)
+                        .ok_or(ErrorCode::MathOverflow)?;
 
-                        counter_user_open_orders.quote_locked = counter_user_open_orders
-                            .quote_locked
-                            .checked_sub(price * size)
-                            .ok_or(ErrorCode::InsufficientFunds)?;
-                        counter_user_open_orders.base_free = counter_user_open_orders
-                            .base_free
-                            .checked_add(size)
-                            .ok_or(ErrorCode::MathOverflow)?;
+                    // Update maker (buyer) balances
+                    counter_user_open_orders.quote_locked = counter_user_open_orders
+                        .quote_locked
+                        .checked_sub(match_quote_amount)
+                        .ok_or(ErrorCode::InsufficientFunds)?;
+                    counter_user_open_orders.base_free = counter_user_open_orders
+                        .base_free
+                        .checked_add(match_size)
+                        .ok_or(ErrorCode::MathOverflow)?;
 
-                        // Extract struct clone (to release RefCell borrow)
-                        let counter_user_data = (*counter_user_open_orders).clone();
-                        drop(counter_user_open_orders);
+                    // Extract struct clone (to release RefCell borrow)
+                    let counter_user_data = (*counter_user_open_orders).clone();
+                    drop(counter_user_open_orders);
 
-                        // Re-borrow and serialize
-                        counter_user_data
-                            .try_serialize(&mut *counter_user_account.data.borrow_mut())?;
+                    // Re-borrow and serialize
+                    counter_user_data
+                        .try_serialize(&mut *counter_user_account.data.borrow_mut())?;
+
+                    // Update order size and remove if fully filled
+                    bid_order.size = bid_order.size
+                        .checked_sub(match_size)
+                        .ok_or(ErrorCode::MathOverflow)?;
+                    size = size
+                        .checked_sub(match_size)
+                        .ok_or(ErrorCode::MathOverflow)?;
+
+                    if bid_order.size == 0 {
                         bids.orders.remove(i);
-                        break;
                     } else {
                         i += 1;
                     }
@@ -281,8 +299,22 @@ impl<'info> PlaceOrder<'info> {
                 }
             }
 
-            // If no match found, add ask to order book
+            // Lock funds and add to book ONLY for remaining unfilled size
             if size > 0 {
+                let cpi_accounts = Transfer {
+                    authority: self.signer.to_account_info(),
+                    from: self.user_base_vault.to_account_info(),
+                    to: self.base_vault.to_account_info(),
+                };
+                let cpi_ctx = CpiContext::new(self.token_program.to_account_info(), cpi_accounts);
+                transfer(cpi_ctx, size)?;
+
+                self.user_open_orders.base_locked = self
+                    .user_open_orders
+                    .base_locked
+                    .checked_add(size)
+                    .ok_or(ErrorCode::MathOverflow)?;
+
                 self.asks.orders.push(Order {
                     order_id: clock.unix_timestamp as u128,
                     owner: self.signer.key(),
@@ -292,8 +324,6 @@ impl<'info> PlaceOrder<'info> {
                 });
             }
         }
-
-        transfer(cpi_ctx, amount);
 
         Ok(())
     }
