@@ -7,6 +7,7 @@ use anchor_spl::{
 };
 
 use crate::*;
+use crate::{error::ErrorCode, program::RapidFlow};
 
 #[allow(overflowing_literals)]
 pub const MAX_ORDERS: usize = 128;
@@ -67,6 +68,12 @@ pub struct Initialize<'info> {
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
+
+    #[account(constraint = this_program.programdata_address()? == Some(program_data.key()))]
+    pub this_program: Program<'info, RapidFlow>,
+
+    #[account(constraint = program_data.upgrade_authority_address == Some(signer.key()) @ ErrorCode::UnauthorizedAccess)]
+    pub program_data: Account<'info, ProgramData>,
 }
 
 impl<'info> Initialize<'info> {
