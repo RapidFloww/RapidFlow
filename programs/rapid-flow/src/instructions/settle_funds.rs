@@ -64,27 +64,25 @@ pub struct SettleFunds<'info> {
 }
 
 impl<'info> SettleFunds<'info> {
-    pub fn settle_funds(&mut self) -> Result<()> {
-        // ==========================================================
-        // SECTION 1: Validate settlement eligibility
-        // ==========================================================
-        // - Check how many tokens (base/quote) are available to withdraw.
-        // - Abort early if both are zero to prevent no-op CPIs.
-        // - This ensures efficient execution and clear signaling to the caller.
-        let base_free = self.open_orders.base_free;
+    pub fn settle_funds(&mut self, is_base: bool, amount: u64) -> Result<()> {
         let base_free = self.open_orders.base_free;
         let quote_free = self.open_orders.quote_free;
 
+        // Validate there are funds to settle
         require!(base_free > 0 || quote_free > 0, ErrorCode::NoFundsToSettle);
 
-        // ==========================================================
-        // SECTION 2: Prepare signer seeds for CPI authority
-        // ==========================================================
-        // - Market PDA acts as the authority for token transfers.
-        // - Seeds are derived from market base/quote mints and bump.
-        // - These seeds will be used to sign CPIs to the token program.
-        let market_key = self.market.key();
+        // Determine what to settle and validate amount
+        let (amount_to_settle, is_settling_base) = if is_base {
+            require!(base_free > 0, ErrorCode::InsufficientBalanceClaim);
+            require!(amount <= base_free, ErrorCode::InvalidClaimAmount);
+            (amount, true)
+        } else {
+            require!(quote_free > 0, ErrorCode::InsufficientBalanceClaim);
+            require!(amount <= quote_free, ErrorCode::InvalidClaimAmount);
+            (amount, false)
+        };
 
+        // Prepare signer seeds
         let seeds = &[
             b"market",
             self.market.base_mint.as_ref(),
@@ -93,48 +91,39 @@ impl<'info> SettleFunds<'info> {
         ];
         let signer_seeds = &[&seeds[..]];
 
-        let cpi_program = self.token_program.to_account_info();
-
-        // ==========================================================
-        // SECTION 3: Transfer base tokens (if any) to user vault
-        // ==========================================================
-        // - Transfers user's settled base tokens from the market base vault.
-        // - After transfer, base_free is reset to zero to reflect completion.
-        if base_free > 0 {
+        // Execute the appropriate transfer
+        if is_settling_base {
             let cpi_accounts = Transfer {
                 authority: self.market.to_account_info(),
                 from: self.base_vault.to_account_info(),
                 to: self.user_base_vault.to_account_info(),
             };
-            let cpi_ctx =
-                CpiContext::new_with_signer(cpi_program.clone(), cpi_accounts, signer_seeds);
-            transfer(cpi_ctx, base_free)?;
-
-            self.open_orders.base_free = 0;
-        }
-
-        // ==========================================================
-        // SECTION 4: Transfer quote tokens (if any) to user vault
-        // ==========================================================
-        // - Transfers user's settled quote tokens from the market quote vault.
-        // - After transfer, quote_free is reset to zero to prevent double withdrawals.
-        if quote_free > 0 {
+            let cpi_ctx = CpiContext::new_with_signer(
+                self.token_program.to_account_info(),
+                cpi_accounts,
+                signer_seeds,
+            );
+            transfer(cpi_ctx, amount_to_settle)?;
+            self.open_orders.base_free = base_free
+                .checked_sub(amount_to_settle)
+                .ok_or(ErrorCode::MathOverflow)?;
+        } else {
             let cpi_accounts = Transfer {
                 authority: self.market.to_account_info(),
                 from: self.quote_vault.to_account_info(),
                 to: self.user_quote_vault.to_account_info(),
             };
-            let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-            transfer(cpi_ctx, quote_free)?;
-
-            self.open_orders.quote_free = 0;
-        }
-
-        // ==========================================================
-        // SECTION 5: Finalization
-        // ==========================================================
-        // - All pending funds have been transferred successfully.
-        // - OpenOrders balances are now fully settled.
+            let cpi_ctx = CpiContext::new_with_signer(
+                self.token_program.to_account_info(),
+                cpi_accounts,
+                signer_seeds,
+            );
+            transfer(cpi_ctx, amount_to_settle)?;
+            self.open_orders.quote_free = quote_free
+                .checked_sub(amount_to_settle)
+                .ok_or(ErrorCode::MathOverflow)?;
+        };
+        
         Ok(())
     }
 }

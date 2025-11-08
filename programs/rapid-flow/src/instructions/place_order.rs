@@ -108,7 +108,7 @@ impl<'info> PlaceOrder<'info> {
 
             while i < asks.orders.len() && size > 0 {
                 let ask_order = &mut asks.orders[i];
-                
+
                 // Only match if price is acceptable
                 if price < ask_order.price {
                     i += 1;
@@ -138,7 +138,8 @@ impl<'info> PlaceOrder<'info> {
 
                     // Calculate match size (take minimum of what's available)
                     let match_size = core::cmp::min(size, ask_order.size);
-                    let match_quote_amount = ask_order.price
+                    let match_quote_amount = ask_order
+                        .price
                         .checked_mul(match_size)
                         .ok_or(ErrorCode::MathOverflow)?;
 
@@ -168,7 +169,8 @@ impl<'info> PlaceOrder<'info> {
                         .try_serialize(&mut *counter_user_account.data.borrow_mut())?;
 
                     // Update order size and remove if fully filled
-                    ask_order.size = ask_order.size
+                    ask_order.size = ask_order
+                        .size
                         .checked_sub(match_size)
                         .ok_or(ErrorCode::MathOverflow)?;
                     size = size
@@ -188,9 +190,7 @@ impl<'info> PlaceOrder<'info> {
 
             // Lock funds and add to book ONLY for remaining unfilled size
             if size > 0 {
-                let amount = price
-                    .checked_mul(size)
-                    .ok_or(ErrorCode::MathOverflow)?;
+                let amount = price.checked_mul(size).ok_or(ErrorCode::MathOverflow)?;
 
                 let cpi_accounts = Transfer {
                     authority: self.signer.to_account_info(),
@@ -221,7 +221,7 @@ impl<'info> PlaceOrder<'info> {
 
             while i < bids.orders.len() && size > 0 {
                 let bid_order = &mut bids.orders[i];
-                
+
                 // Only match if price is acceptable
                 if price > bid_order.price {
                     i += 1;
@@ -251,7 +251,8 @@ impl<'info> PlaceOrder<'info> {
 
                     // Calculate match size
                     let match_size = core::cmp::min(size, bid_order.size);
-                    let match_quote_amount = bid_order.price
+                    let match_quote_amount = bid_order
+                        .price
                         .checked_mul(match_size)
                         .ok_or(ErrorCode::MathOverflow)?;
 
@@ -281,7 +282,8 @@ impl<'info> PlaceOrder<'info> {
                         .try_serialize(&mut *counter_user_account.data.borrow_mut())?;
 
                     // Update order size and remove if fully filled
-                    bid_order.size = bid_order.size
+                    bid_order.size = bid_order
+                        .size
                         .checked_sub(match_size)
                         .ok_or(ErrorCode::MathOverflow)?;
                     size = size

@@ -13,4 +13,8 @@ pub enum ErrorCode {
     MathOverflow,
     #[msg("No funds to settle")]
     NoFundsToSettle,
+    #[msg("Invalid claim amount")]
+    InvalidClaimAmount,
+    #[msg("Insufficient balance to claim")]
+    InsufficientBalanceClaim,
 }
