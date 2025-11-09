@@ -283,21 +283,10 @@ describe("rapid-flow", () => {
         program.programId
       );
 
-      // Derive settle orders PDA (uses "open_orders")
-      const [settleOrdersPda] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("open_orders"),
-          marketPda.toBuffer(),
-          userPubkey.toBuffer(),
-        ],
-        program.programId
-      );
-
       // Store in user object
       (user as any).baseVault = baseAcc.address;
       (user as any).quoteVault = quoteAcc.address;
       (user as any).openOrdersPda = openOrdersPda;
-      (user as any).settleOrdersPda = settleOrdersPda;
 
       // Mint tokens
       if (user.baseAmount > 0) {
@@ -352,10 +341,6 @@ describe("rapid-flow", () => {
       console.log("Base Vault:", (user as any).baseVault.toBase58());
       console.log("Quote Vault:", (user as any).quoteVault.toBase58());
       console.log("Open Orders PDA:", (user as any).openOrdersPda.toBase58());
-      console.log(
-        "Settle Orders PDA:",
-        (user as any).settleOrdersPda.toBase58()
-      );
 
       const baseAcc = await getAccount(connection, (user as any).baseVault);
       const quoteAcc = await getAccount(connection, (user as any).quoteVault);
@@ -586,6 +571,340 @@ describe("rapid-flow", () => {
     });
   });
 
+  // Add these tests after your existing testOrders tests, before the closing });
+
+describe("Settle Funds Tests", () => {
+  it("Alice settles partial quote funds (has 285 quote free)", async () => {
+    console.log("\n>>>>>>>>>>>> Alice settles partial quote funds <<<<<<<<<<<<\n");
+
+    const user = users.find((u) => u.name === "Alice")!;
+    const userWallet = user.wallet instanceof Keypair ? user.wallet : user.wallet.payer;
+    const userPubkey = user.wallet instanceof Keypair
+      ? user.wallet.publicKey
+      : (user.wallet as anchor.Wallet).publicKey;
+
+    // Get current state
+    let openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+    const quoteFree = Number(openOrders.quoteFree);
+    
+    console.log("Quote free before settle:", quoteFree);
+    assert.equal(quoteFree, 285, "Alice should have 285 quote free");
+
+    // Capture balances before
+    const quoteAccBefore = await getAccount(connection, (user as any).quoteVault);
+    const quoteVaultBefore = await getAccount(connection, quoteVault);
+
+    // Settle half of the quote funds
+    const amountToSettle = 150;
+    const tx = await program.methods
+      .settleFunds(false, new anchor.BN(amountToSettle))
+      .accounts({
+        signer: userPubkey,
+        //@ts-ignore
+        market: marketPda,
+        openOrders: (user as any).openOrdersPda,
+        baseVault,
+        quoteVault,
+        userBaseVault: (user as any).baseVault,
+        userQuoteVault: (user as any).quoteVault,
+      })
+      .signers([userWallet])
+      .rpc();
+
+    await connection.confirmTransaction(tx);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Capture balances after
+    const quoteAccAfter = await getAccount(connection, (user as any).quoteVault);
+    const quoteVaultAfter = await getAccount(connection, quoteVault);
+    openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+
+    console.log("\n========== SETTLEMENT RESULTS ==========");
+    console.log("Amount settled:", amountToSettle);
+    console.log("User quote balance change:", Number(quoteAccAfter.amount) - Number(quoteAccBefore.amount));
+    console.log("Market quote vault change:", Number(quoteVaultAfter.amount) - Number(quoteVaultBefore.amount));
+    console.log("Quote free after:", Number(openOrders.quoteFree));
+
+    // Assertions
+    assert.equal(
+      Number(quoteAccAfter.amount) - Number(quoteAccBefore.amount),
+      amountToSettle,
+      "User should receive the settled amount"
+    );
+    assert.equal(
+      Number(quoteVaultBefore.amount) - Number(quoteVaultAfter.amount),
+      amountToSettle,
+      "Market vault should decrease by settled amount"
+    );
+    assert.equal(
+      Number(openOrders.quoteFree),
+      quoteFree - amountToSettle,
+      "Quote free should decrease by settled amount"
+    );
+
+    console.log("\nTransaction sig:", tx);
+  });
+
+  it("Alice settles remaining quote funds (135 left)", async () => {
+    console.log("\n>>>>>>>>>>>> Alice settles remaining quote funds <<<<<<<<<<<<\n");
+
+    const user = users.find((u) => u.name === "Alice")!;
+    const userWallet = user.wallet instanceof Keypair ? user.wallet : user.wallet.payer;
+    const userPubkey = user.wallet instanceof Keypair
+      ? user.wallet.publicKey
+      : (user.wallet as anchor.Wallet).publicKey;
+
+    // Get current state
+    let openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+    const quoteFree = Number(openOrders.quoteFree);
+    
+    console.log("Quote free before settle:", quoteFree);
+    assert.equal(quoteFree, 135, "Alice should have 135 quote free remaining");
+
+    // Capture balances before
+    const quoteAccBefore = await getAccount(connection, (user as any).quoteVault);
+    const quoteVaultBefore = await getAccount(connection, quoteVault);
+
+    // Settle all remaining quote funds
+    const tx = await program.methods
+      .settleFunds(false, new anchor.BN(quoteFree))
+      .accounts({
+        signer: userPubkey,
+        //@ts-ignore
+        market: marketPda,
+        openOrders: (user as any).openOrdersPda,
+        baseVault,
+        quoteVault,
+        userBaseVault: (user as any).baseVault,
+        userQuoteVault: (user as any).quoteVault,
+      })
+      .signers([userWallet])
+      .rpc();
+
+    await connection.confirmTransaction(tx);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Capture balances after
+    const quoteAccAfter = await getAccount(connection, (user as any).quoteVault);
+    const quoteVaultAfter = await getAccount(connection, quoteVault);
+    openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+
+    console.log("\n========== SETTLEMENT RESULTS ==========");
+    console.log("Amount settled:", quoteFree);
+    console.log("User quote balance change:", Number(quoteAccAfter.amount) - Number(quoteAccBefore.amount));
+    console.log("Market quote vault change:", Number(quoteVaultAfter.amount) - Number(quoteVaultBefore.amount));
+    console.log("Quote free after:", Number(openOrders.quoteFree));
+    console.log("Quote locked (unchanged):", Number(openOrders.quoteLocked));
+
+    // Assertions
+    assert.equal(
+      Number(quoteAccAfter.amount) - Number(quoteAccBefore.amount),
+      quoteFree,
+      "User should receive all remaining quote funds"
+    );
+    assert.equal(
+      Number(quoteVaultBefore.amount) - Number(quoteVaultAfter.amount),
+      quoteFree,
+      "Market vault should decrease by settled amount"
+    );
+    assert.equal(
+      Number(openOrders.quoteFree),
+      0,
+      "Quote free should be zero after settling all"
+    );
+    assert.equal(
+      Number(openOrders.quoteLocked),
+      500,
+      "Quote locked should remain unchanged at 500"
+    );
+
+    console.log("\nTransaction sig:", tx);
+  });
+
+  it("Bob settles base funds (has 3 base free)", async () => {
+    console.log("\n>>>>>>>>>>>> Bob settles base funds <<<<<<<<<<<<\n");
+
+    const user = users.find((u) => u.name === "Bob")!;
+    const userWallet = user.wallet instanceof Keypair ? user.wallet : user.wallet.payer;
+    const userPubkey = user.wallet instanceof Keypair
+      ? user.wallet.publicKey
+      : (user.wallet as anchor.Wallet).publicKey;
+
+    // Get current state
+    let openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+    const baseFree = Number(openOrders.baseFree);
+    const quoteLocked = Number(openOrders.quoteLocked);
+    
+    console.log("Base free before settle:", baseFree);
+    console.log("Quote locked (should remain unchanged):", quoteLocked);
+    assert.equal(baseFree, 3, "Bob should have 3 base free");
+
+    // Capture balances before
+    const baseAccBefore = await getAccount(connection, (user as any).baseVault);
+    const baseVaultBefore = await getAccount(connection, baseVault);
+
+    // Settle all base funds
+    const tx = await program.methods
+      .settleFunds(true, new anchor.BN(baseFree))
+      .accounts({
+        signer: userPubkey,
+        //@ts-ignore
+        market: marketPda,
+        openOrders: (user as any).openOrdersPda,
+        baseVault,
+        quoteVault,
+        userBaseVault: (user as any).baseVault,
+        userQuoteVault: (user as any).quoteVault,
+      })
+      .signers([userWallet])
+      .rpc();
+
+    await connection.confirmTransaction(tx);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Capture balances after
+    const baseAccAfter = await getAccount(connection, (user as any).baseVault);
+    const baseVaultAfter = await getAccount(connection, baseVault);
+    openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+
+    console.log("\n========== SETTLEMENT RESULTS ==========");
+    console.log("Amount settled:", baseFree);
+    console.log("User base balance change:", Number(baseAccAfter.amount) - Number(baseAccBefore.amount));
+    console.log("Market base vault change:", Number(baseVaultAfter.amount) - Number(baseVaultBefore.amount));
+    console.log("Base free after:", Number(openOrders.baseFree));
+    console.log("Quote locked (unchanged):", Number(openOrders.quoteLocked));
+
+    // Assertions
+    assert.equal(
+      Number(baseAccAfter.amount) - Number(baseAccBefore.amount),
+      baseFree,
+      "User should receive all base funds"
+    );
+    assert.equal(
+      Number(baseVaultBefore.amount) - Number(baseVaultAfter.amount),
+      baseFree,
+      "Market vault should decrease by settled amount"
+    );
+    assert.equal(
+      Number(openOrders.baseFree),
+      0,
+      "Base free should be zero after settling all"
+    );
+    assert.equal(
+      Number(openOrders.quoteLocked),
+      quoteLocked,
+      "Quote locked should remain unchanged"
+    );
+
+    console.log("\nTransaction sig:", tx);
+  });
+
+  it("Should fail: Alice tries to settle more than available quote", async () => {
+    console.log("\n>>>>>>>>>>>> Testing: Alice settles more than available <<<<<<<<<<<<\n");
+
+    const user = users.find((u) => u.name === "Alice")!;
+    const userWallet = user.wallet instanceof Keypair ? user.wallet : user.wallet.payer;
+    const userPubkey = user.wallet instanceof Keypair
+      ? user.wallet.publicKey
+      : (user.wallet as anchor.Wallet).publicKey;
+
+    let openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+    const quoteFree = Number(openOrders.quoteFree);
+
+    console.log("Quote free:", quoteFree);
+    console.log("Attempting to settle:", quoteFree + 1000);
+
+    try {
+      await program.methods
+        .settleFunds(false, new anchor.BN(quoteFree + 1000))
+        .accounts({
+          signer: userPubkey,
+          //@ts-ignore
+          market: marketPda,
+          openOrders: (user as any).openOrdersPda,
+          baseVault,
+          quoteVault,
+          userBaseVault: (user as any).baseVault,
+          userQuoteVault: (user as any).quoteVault,
+        })
+        .signers([userWallet])
+        .rpc();
+      
+      assert.fail("Should have thrown InvalidClaimAmount error");
+    } catch (err: any) {
+      console.log("✓ Error caught as expected:", err.message);
+    }
+  });
+
+  it("Should fail: Bob tries to settle base when already settled", async () => {
+    console.log("\n>>>>>>>>>>>> Testing: Bob settles when no base funds available <<<<<<<<<<<<\n");
+
+    const user = users.find((u) => u.name === "Bob")!;
+    const userWallet = user.wallet instanceof Keypair ? user.wallet : user.wallet.payer;
+    const userPubkey = user.wallet instanceof Keypair
+      ? user.wallet.publicKey
+      : (user.wallet as anchor.Wallet).publicKey;
+
+    let openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+    console.log("Base free:", Number(openOrders.baseFree));
+    console.log("Quote locked:", Number(openOrders.quoteLocked));
+    console.log("Attempting to settle 100 base tokens when balance is 0");
+
+    // Bob should have no free base funds at this point
+    try {
+      await program.methods
+        .settleFunds(true, new anchor.BN(100))
+        .accounts({
+          signer: userPubkey,
+          //@ts-ignore
+          market: marketPda,
+          openOrders: (user as any).openOrdersPda,
+          baseVault,
+          quoteVault,
+          userBaseVault: (user as any).baseVault,
+          userQuoteVault: (user as any).quoteVault,
+        })
+        .signers([userWallet])
+        .rpc();
+      
+      assert.fail("Should have thrown InsufficientBalanceClaim error");
+    } catch (err: any) {
+      console.log("✓ Error caught as expected:", err.message);
+    }
+  });
+
+  it("Final balances summary - Alice & Bob", async () => {
+    console.log("\n>>>>>>>>>>>> FINAL BALANCES - ALICE & BOB <<<<<<<<<<<<\n");
+
+    for (const userName of ["Alice", "Bob"]) {
+      const user = users.find((u) => u.name === userName)!;
+      const baseAcc = await getAccount(connection, (user as any).baseVault);
+      const quoteAcc = await getAccount(connection, (user as any).quoteVault);
+      
+      let openOrders = null;
+      try {
+        openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+      } catch {}
+
+      console.log(`\n========== ${userName} ==========`);
+      console.log(`Base balance: ${Number(baseAcc.amount)}`);
+      console.log(`Quote balance: ${Number(quoteAcc.amount)}`);
+      if (openOrders) {
+        console.log(`Base Free: ${Number(openOrders.baseFree)}`);
+        console.log(`Quote Free: ${Number(openOrders.quoteFree)}`);
+        console.log(`Base Locked: ${Number(openOrders.baseLocked)}`);
+        console.log(`Quote Locked: ${Number(openOrders.quoteLocked)}`);
+      }
+    }
+
+    const baseVaultFinal = await getAccount(connection, baseVault);
+    const quoteVaultFinal = await getAccount(connection, quoteVault);
+    console.log("\n========== Market Vaults ==========");
+    console.log(`Base vault: ${Number(baseVaultFinal.amount)}`);
+    console.log(`Quote vault: ${Number(quoteVaultFinal.amount)}`);
+  });
+});
+
   async function logUserOpenOrdersState(userName: string, userPda: PublicKey) {
     try {
       const openOrdersAccount = await program.account.openOrders.fetch(userPda);
@@ -603,3 +922,4 @@ describe("rapid-flow", () => {
     }
   }
 });
+

@@ -21,7 +21,7 @@ pub struct SettleFunds<'info> {
 
     #[account(
         mut,
-        seeds = [b"open_orders", market.key().as_ref(), signer.key().as_ref()],
+        seeds = [b"user_open_orders", market.key().as_ref(), signer.key().as_ref()],
         bump,
         constraint = open_orders.owner == signer.key() @ ErrorCode::UnauthorizedAccess
     )]
