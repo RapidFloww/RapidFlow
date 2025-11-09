@@ -742,6 +742,381 @@ describe("Settle Funds Tests", () => {
   });
 });
 
+describe("Cancel Order Tests", () => {
+  
+  // Helper function to get order book and find user's orders
+  async function getUserOrders(isBid: boolean) {
+    const orderBookPda = isBid ? bidsPda : asksPda;
+    const orderBook = await program.account.orderBook.fetch(orderBookPda);
+    return orderBook.orders;
+  }
+
+  it("Alice cancels her remaining bid order (300 quote locked)", async () => {
+    console.log("\n>>>>>>>>>>>> Alice cancels Bid order <<<<<<<<<<<<\n");
+
+    const user = users.find((u) => u.name === "Alice")!;
+    const userWallet = user.wallet instanceof Keypair ? user.wallet : user.wallet.payer;
+    const userPubkey = user.wallet instanceof Keypair
+      ? user.wallet.publicKey
+      : (user.wallet as anchor.Wallet).publicKey;
+
+    // Get Alice's orders from bids book
+    const bidsOrders = await getUserOrders(true);
+    const aliceOrder = bidsOrders.find((o: any) => o.owner.equals(userPubkey));
+    
+    console.log("Alice's bid orders:", bidsOrders.filter((o: any) => o.owner.equals(userPubkey)).length);
+    
+    if (!aliceOrder) {
+      console.log("⚠ Alice has no bid orders to cancel");
+      return;
+    }
+
+    console.log("Order ID:", aliceOrder.orderId.toString());
+    console.log("Price:", aliceOrder.price.toString());
+    console.log("Size:", aliceOrder.size.toString());
+
+    // Get state before cancellation
+    let openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+    const quoteLockedBefore = Number(openOrders.quoteLocked);
+    
+    console.log("\nBefore cancellation:");
+    console.log("  Quote locked:", quoteLockedBefore);
+
+    const quoteAccBefore = await getAccount(connection, (user as any).quoteVault);
+    const quoteVaultBefore = await getAccount(connection, quoteVault);
+
+    // Cancel the order
+    const tx = await program.methods
+      .cancelOrder(aliceOrder.orderId, true) // true = is_bid
+      .accounts({
+        signer: userPubkey,
+        //@ts-ignore
+        market: marketPda,
+        bids: bidsPda,
+        asks: asksPda,
+        openOrders: (user as any).openOrdersPda,
+        baseVault,
+        quoteVault,
+        userBaseVault: (user as any).baseVault,
+        userQuoteVault: (user as any).quoteVault,
+      })
+      .signers([userWallet])
+      .rpc();
+
+    await connection.confirmTransaction(tx);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Get state after cancellation
+    openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+    const quoteLockedAfter = Number(openOrders.quoteLocked);
+
+    const quoteAccAfter = await getAccount(connection, (user as any).quoteVault);
+    const quoteVaultAfter = await getAccount(connection, quoteVault);
+
+    const refundAmount = Number(aliceOrder.price) * Number(aliceOrder.size);
+
+    console.log("\n========== CANCELLATION RESULTS ==========");
+    console.log("Refund amount:", refundAmount);
+    console.log("User quote: %d -> %d (change: +%d)", 
+      Number(quoteAccBefore.amount), 
+      Number(quoteAccAfter.amount),
+      Number(quoteAccAfter.amount) - Number(quoteAccBefore.amount)
+    );
+    console.log("Market quote vault: %d -> %d (change: -%d)", 
+      Number(quoteVaultBefore.amount), 
+      Number(quoteVaultAfter.amount),
+      Number(quoteVaultBefore.amount) - Number(quoteVaultAfter.amount)
+    );
+    console.log("Quote locked: %d -> %d", quoteLockedBefore, quoteLockedAfter);
+
+    // Assertions
+    assert.equal(
+      Number(quoteAccAfter.amount) - Number(quoteAccBefore.amount),
+      refundAmount,
+      "User should receive full refund"
+    );
+    assert.equal(
+      Number(quoteVaultBefore.amount) - Number(quoteVaultAfter.amount),
+      refundAmount,
+      "Market vault should decrease by refund amount"
+    );
+    assert.equal(
+      quoteLockedAfter,
+      quoteLockedBefore - refundAmount,
+      "Quote locked should decrease by refund amount"
+    );
+
+    // Verify order removed from order book
+    const bidsOrdersAfter = await getUserOrders(true);
+    const aliceOrderAfter = bidsOrdersAfter.find((o: any) => 
+      o.owner.equals(userPubkey) && o.orderId.eq(aliceOrder.orderId)
+    );
+    assert.isUndefined(aliceOrderAfter, "Order should be removed from order book");
+
+    console.log("\n✓ Transaction sig:", tx);
+  });
+
+  it("Bob cancels his ask order (3 base locked)", async () => {
+    console.log("\n>>>>>>>>>>>> Bob cancels Ask order <<<<<<<<<<<<\n");
+
+    const user = users.find((u) => u.name === "Bob")!;
+    const userWallet = user.wallet instanceof Keypair ? user.wallet : user.wallet.payer;
+    const userPubkey = user.wallet instanceof Keypair
+      ? user.wallet.publicKey
+      : (user.wallet as anchor.Wallet).publicKey;
+
+    // Get Bob's orders from asks book
+    const asksOrders = await getUserOrders(false);
+    const bobOrder = asksOrders.find((o: any) => o.owner.equals(userPubkey));
+    
+    console.log("Bob's ask orders:", asksOrders.filter((o: any) => o.owner.equals(userPubkey)).length);
+    
+    if (!bobOrder) {
+      console.log("⚠ Bob has no ask orders to cancel");
+      return;
+    }
+
+    console.log("Order ID:", bobOrder.orderId.toString());
+    console.log("Price:", bobOrder.price.toString());
+    console.log("Size:", bobOrder.size.toString());
+
+    // Get state before cancellation
+    let openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+    const baseLockedBefore = Number(openOrders.baseLocked);
+    
+    console.log("\nBefore cancellation:");
+    console.log("  Base locked:", baseLockedBefore);
+
+    const baseAccBefore = await getAccount(connection, (user as any).baseVault);
+    const baseVaultBefore = await getAccount(connection, baseVault);
+
+    // Cancel the order
+    const tx = await program.methods
+      .cancelOrder(bobOrder.orderId, false) // false = is_ask
+      .accounts({
+        signer: userPubkey,
+        //@ts-ignore
+        market: marketPda,
+        bids: bidsPda,
+        asks: asksPda,
+        openOrders: (user as any).openOrdersPda,
+        baseVault,
+        quoteVault,
+        userBaseVault: (user as any).baseVault,
+        userQuoteVault: (user as any).quoteVault,
+      })
+      .signers([userWallet])
+      .rpc();
+
+    await connection.confirmTransaction(tx);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Get state after cancellation
+    openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+    const baseLockedAfter = Number(openOrders.baseLocked);
+
+    const baseAccAfter = await getAccount(connection, (user as any).baseVault);
+    const baseVaultAfter = await getAccount(connection, baseVault);
+
+    const refundAmount = Number(bobOrder.size);
+
+    console.log("\n========== CANCELLATION RESULTS ==========");
+    console.log("Refund amount:", refundAmount);
+    console.log("User base: %d -> %d (change: +%d)", 
+      Number(baseAccBefore.amount), 
+      Number(baseAccAfter.amount),
+      Number(baseAccAfter.amount) - Number(baseAccBefore.amount)
+    );
+    console.log("Market base vault: %d -> %d (change: -%d)", 
+      Number(baseVaultBefore.amount), 
+      Number(baseVaultAfter.amount),
+      Number(baseVaultBefore.amount) - Number(baseVaultAfter.amount)
+    );
+    console.log("Base locked: %d -> %d", baseLockedBefore, baseLockedAfter);
+
+    // Assertions
+    assert.equal(
+      Number(baseAccAfter.amount) - Number(baseAccBefore.amount),
+      refundAmount,
+      "User should receive full refund"
+    );
+    assert.equal(
+      Number(baseVaultBefore.amount) - Number(baseVaultAfter.amount),
+      refundAmount,
+      "Market vault should decrease by refund amount"
+    );
+    assert.equal(
+      baseLockedAfter,
+      baseLockedBefore - refundAmount,
+      "Base locked should decrease by refund amount"
+    );
+
+    // Verify order removed from order book
+    const asksOrdersAfter = await getUserOrders(false);
+    const bobOrderAfter = asksOrdersAfter.find((o: any) => 
+      o.owner.equals(userPubkey) && o.orderId.eq(bobOrder.orderId)
+    );
+    assert.isUndefined(bobOrderAfter, "Order should be removed from order book");
+
+    console.log("\n✓ Transaction sig:", tx);
+  });
+
+  it("Bob cancels his bid order (360 quote locked)", async () => {
+    console.log("\n>>>>>>>>>>>> Bob cancels Bid order <<<<<<<<<<<<\n");
+
+    const user = users.find((u) => u.name === "Bob")!;
+    const userWallet = user.wallet instanceof Keypair ? user.wallet : user.wallet.payer;
+    const userPubkey = user.wallet instanceof Keypair
+      ? user.wallet.publicKey
+      : (user.wallet as anchor.Wallet).publicKey;
+
+    // Get Bob's orders from bids book
+    const bidsOrders = await getUserOrders(true);
+    const bobOrder = bidsOrders.find((o: any) => o.owner.equals(userPubkey));
+    
+    console.log("Bob's bid orders:", bidsOrders.filter((o: any) => o.owner.equals(userPubkey)).length);
+    
+    if (!bobOrder) {
+      console.log("⚠ Bob has no bid orders to cancel");
+      return;
+    }
+
+    console.log("Order ID:", bobOrder.orderId.toString());
+    console.log("Price:", bobOrder.price.toString());
+    console.log("Size:", bobOrder.size.toString());
+
+    // Get state before cancellation
+    let openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+    const quoteLockedBefore = Number(openOrders.quoteLocked);
+    
+    console.log("\nBefore cancellation:");
+    console.log("  Quote locked:", quoteLockedBefore);
+
+    const quoteAccBefore = await getAccount(connection, (user as any).quoteVault);
+    const quoteVaultBefore = await getAccount(connection, quoteVault);
+
+    // Cancel the order
+    const tx = await program.methods
+      .cancelOrder(bobOrder.orderId, true) // true = is_bid
+      .accounts({
+        signer: userPubkey,
+        //@ts-ignore
+        market: marketPda,
+        bids: bidsPda,
+        asks: asksPda,
+        openOrders: (user as any).openOrdersPda,
+        baseVault,
+        quoteVault,
+        userBaseVault: (user as any).baseVault,
+        userQuoteVault: (user as any).quoteVault,
+      })
+      .signers([userWallet])
+      .rpc();
+
+    await connection.confirmTransaction(tx);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Get state after cancellation
+    openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+    const quoteLockedAfter = Number(openOrders.quoteLocked);
+
+    const quoteAccAfter = await getAccount(connection, (user as any).quoteVault);
+    const quoteVaultAfter = await getAccount(connection, quoteVault);
+
+    const refundAmount = Number(bobOrder.price) * Number(bobOrder.size);
+
+    console.log("\n========== CANCELLATION RESULTS ==========");
+    console.log("Refund amount:", refundAmount);
+    console.log("User quote: %d -> %d (change: +%d)", 
+      Number(quoteAccBefore.amount), 
+      Number(quoteAccAfter.amount),
+      Number(quoteAccAfter.amount) - Number(quoteAccBefore.amount)
+    );
+    console.log("Market quote vault: %d -> %d (change: -%d)", 
+      Number(quoteVaultBefore.amount), 
+      Number(quoteVaultAfter.amount),
+      Number(quoteVaultBefore.amount) - Number(quoteVaultAfter.amount)
+    );
+    console.log("Quote locked: %d -> %d", quoteLockedBefore, quoteLockedAfter);
+
+    // Assertions
+    assert.equal(
+      Number(quoteAccAfter.amount) - Number(quoteAccBefore.amount),
+      refundAmount,
+      "User should receive full refund"
+    );
+    assert.equal(
+      Number(quoteVaultBefore.amount) - Number(quoteVaultAfter.amount),
+      refundAmount,
+      "Market vault should decrease by refund amount"
+    );
+    assert.equal(
+      quoteLockedAfter,
+      quoteLockedBefore - refundAmount,
+      "Quote locked should decrease by refund amount"
+    );
+
+    // Verify order removed from order book
+    const bidsOrdersAfter = await getUserOrders(true);
+    const bobOrderAfter = bidsOrdersAfter.find((o: any) => 
+      o.owner.equals(userPubkey) && o.orderId.eq(bobOrder.orderId)
+    );
+    assert.isUndefined(bobOrderAfter, "Order should be removed from order book");
+
+    console.log("\n✓ Transaction sig:", tx);
+  });
+
+  it("Final balances after all cancellations", async () => {
+    console.log("\n>>>>>>>>>>>> FINAL BALANCES AFTER CANCELLATIONS <<<<<<<<<<<<\n");
+
+    for (const user of users) {
+      const baseAcc = await getAccount(connection, (user as any).baseVault);
+      const quoteAcc = await getAccount(connection, (user as any).quoteVault);
+      
+      let openOrders = null;
+      try {
+        openOrders = await program.account.openOrders.fetch((user as any).openOrdersPda);
+      } catch {}
+
+      console.log(`\n========== ${user.name} ==========`);
+      console.log(`Wallet Balances:`);
+      console.log(`  Base:  ${Number(baseAcc.amount)}`);
+      console.log(`  Quote: ${Number(quoteAcc.amount)}`);
+      
+      if (openOrders) {
+        console.log(`Open Orders:`);
+        console.log(`  Base Free:    ${Number(openOrders.baseFree)}`);
+        console.log(`  Base Locked:  ${Number(openOrders.baseLocked)}`);
+        console.log(`  Quote Free:   ${Number(openOrders.quoteFree)}`);
+        console.log(`  Quote Locked: ${Number(openOrders.quoteLocked)}`);
+      }
+    }
+
+    const baseVaultFinal = await getAccount(connection, baseVault);
+    const quoteVaultFinal = await getAccount(connection, quoteVault);
+    console.log("\n========== Market Vaults ==========");
+    console.log(`Base vault:  ${Number(baseVaultFinal.amount)}`);
+    console.log(`Quote vault: ${Number(quoteVaultFinal.amount)}`);
+
+    console.log("\n========== ORDER BOOKS ==========");
+    const bidsBook = await program.account.orderBook.fetch(bidsPda);
+    const asksBook = await program.account.orderBook.fetch(asksPda);
+    console.log(`Bids remaining: ${bidsBook.orders.length}`);
+    console.log(`Asks remaining: ${asksBook.orders.length}`);
+
+    // Verify all orders are cancelled and all locked funds returned
+    assert.equal(bidsBook.orders.length, 0, "All bids should be cancelled");
+    assert.equal(asksBook.orders.length, 0, "All asks should be cancelled");
+    assert.equal(Number(baseVaultFinal.amount), 0, "Base vault should be empty");
+    assert.equal(Number(quoteVaultFinal.amount), 0, "Quote vault should be empty");
+
+    console.log("\n✓ All orders cancelled successfully");
+    console.log("✓ All locked funds returned to users");
+    console.log("✓ Market vaults are empty");
+  });
+});
+
+
   async function logUserOpenOrdersState(userName: string, userPda: PublicKey) {
     try {
       const openOrdersAccount = await program.account.openOrders.fetch(userPda);

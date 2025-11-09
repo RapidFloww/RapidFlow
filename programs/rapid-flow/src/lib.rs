@@ -33,7 +33,7 @@ pub mod rapid_flow {
         Ok(())
     }
 
-    // pub fn cancel_order(ctx: Context<CancelOrder>, order_id: u128, is_bid: bool) -> Result<()> {
-    //     ctx.accounts.cancel_order(order_id, is_bid)
-    // }
+    pub fn cancel_order(ctx: Context<CancelOrder>, order_id: u128, is_bid: bool) -> Result<()> {
+        ctx.accounts.cancel_order(order_id, is_bid)
+    }
 }
