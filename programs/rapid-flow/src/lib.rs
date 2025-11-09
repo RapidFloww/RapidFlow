@@ -13,7 +13,7 @@ pub mod rapid_flow {
     use super::*;
 
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        ctx.accounts.initialize()?;
+        ctx.accounts.initialize(&ctx.bumps)?;
         Ok(())
     }
 
@@ -28,7 +28,7 @@ pub mod rapid_flow {
         Ok(())
     }
 
-    pub fn settle_funds(ctx: Context<SettleFunds>, is_base: bool, amount: u64) -> Result<()> {
+    pub fn settle_funds(ctx: Context<SettleFunds>, is_base:bool, amount: u64) -> Result<()> {
         ctx.accounts.settle_funds(is_base, amount)?;
         Ok(())
     }

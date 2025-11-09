@@ -70,7 +70,7 @@ pub struct Initialize<'info> {
 }
 
 impl<'info> Initialize<'info> {
-    pub fn initialize(&mut self) -> Result<()> {
+    pub fn initialize(&mut self, bumps: &InitializeBumps) -> Result<()> {
         // SECTION 1: Initialize the Market Account
         self.market.set_inner(Market {
             authority: self.signer.key(),
@@ -80,7 +80,7 @@ impl<'info> Initialize<'info> {
             quote_vault: self.quote_vault.key(),
             bids: self.bids.key(),
             asks: self.asks.key(),
-            bump: self.market.bump,
+            bump: bumps.market,
         });
 
         // SECTION 2: Initialize the Bids OrderBook
@@ -88,7 +88,7 @@ impl<'info> Initialize<'info> {
             market: self.market.key(),
             is_bid: true,
             orders: Vec::new(),
-            bump: self.bids.bump,
+            bump: bumps.bids,
         });
 
         // SECTION 3: Initialize the Asks OrderBook
@@ -96,7 +96,7 @@ impl<'info> Initialize<'info> {
             market: self.market.key(),
             is_bid: false,
             orders: Vec::new(),
-            bump: self.asks.bump,
+            bump: bumps.asks,
         });
 
         Ok(())
