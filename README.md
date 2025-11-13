@@ -45,9 +45,10 @@ The protocol consists of several key components:
 
 ### State Accounts
 
-- **OrderBook**: Main state storing all orders and market metadata
-- **Order**: Individual order data (price, quantity, side, owner)
-- **UserAccount**: Tracks user positions and balances
+- **Market**: Main market state storing authority, token mints (base/quote), vaults, and references to bid/ask order books
+- **OrderBook**: Stores all orders for one side of the market (bids or asks) with price-time priority
+- **Order**: Individual order data containing order ID, owner, price, size, and timestamp
+- **OpenOrders**: Tracks user's locked and free balances for both base and quote tokens in a specific market
 
 ### Core Instructions
 
