@@ -6,13 +6,13 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-rapid_flow = "5hZHJEeFN45bz4xYu1A2RHwtfapTHiq1j8yroVnvjPtQ"
+rapid_flow = "7ssJMQw9tFamJcsdxuaEwM6iKF7LS3e2ypNNFKRcLHjA"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
